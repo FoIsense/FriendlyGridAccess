@@ -1,7 +1,6 @@
 using HarmonyLib;
 using Sandbox.Game.Entities;
 using Sandbox.Game.Entities.Cube;
-using Sandbox.ModAPI.Ingame;
 using System;
 using System.Reflection;
 using VRage.Game;
@@ -10,27 +9,10 @@ namespace FriendlyGridAccess
 {
     internal static class AccessPatch
     {
-        private const string HarmonyId =
-            "com.openai.friendlygridaccess";
-
         internal static void Apply(Harmony harmony)
         {
             if (harmony == null)
                 throw new ArgumentNullException(nameof(harmony));
-
-            /*
-             * Current Space Engineers exposes terminal access as:
-             *
-             * HasPlayerAccess(
-             *     long playerId,
-             *     MyRelationsBetweenPlayerAndBlock defaultNoUser)
-             *
-             * Older FriendlyGridAccess builds attempted to patch:
-             *
-             * MyCubeBlock.HasPlayerAccess(long)
-             *
-             * which no longer exists in current SE builds.
-             */
 
             var terminalBlockType =
                 AccessTools.TypeByName(
@@ -42,6 +24,19 @@ namespace FriendlyGridAccess
                     "Could not locate Sandbox.Game.Entities.Cube.MyTerminalBlock.");
             }
 
+            PatchHasPlayerAccess(
+                harmony,
+                terminalBlockType);
+
+            PatchHasPlayerAccessWithNobodyCheck(
+                harmony,
+                terminalBlockType);
+        }
+
+        private static void PatchHasPlayerAccess(
+            Harmony harmony,
+            Type terminalBlockType)
+        {
             var target = AccessTools.Method(
                 terminalBlockType,
                 "HasPlayerAccess",
@@ -73,40 +68,108 @@ namespace FriendlyGridAccess
 
             harmony.Patch(
                 target,
-                postfix: new HarmonyMethod(postfixMethod));
+                postfix:
+                    new HarmonyMethod(postfixMethod));
 
             Plugin.Log.Info(
-                $"FriendlyGridAccess patched " +
-                $"{target.DeclaringType?.FullName}.{target.Name}" +
-                "(long, MyRelationsBetweenPlayerAndBlock)");
+                "FriendlyGridAccess patched " +
+                "MyTerminalBlock.HasPlayerAccess.");
+        }
+
+        private static void PatchHasPlayerAccessWithNobodyCheck(
+            Harmony harmony,
+            Type terminalBlockType)
+        {
+            var target = AccessTools.Method(
+                terminalBlockType,
+                "HasPlayerAccessWithNobodyCheck",
+                new[]
+                {
+                    typeof(long),
+                    typeof(bool)
+                });
+
+            if (target == null)
+            {
+                throw new MissingMethodException(
+                    terminalBlockType.FullName,
+                    "HasPlayerAccessWithNobodyCheck(long, bool)");
+            }
+
+            var postfixMethod =
+                typeof(AccessPatch).GetMethod(
+                    nameof(HasPlayerAccessWithNobodyCheckPostfix),
+                    BindingFlags.Static |
+                    BindingFlags.NonPublic);
+
+            if (postfixMethod == null)
+            {
+                throw new MissingMethodException(
+                    typeof(AccessPatch).FullName,
+                    nameof(HasPlayerAccessWithNobodyCheckPostfix));
+            }
+
+            harmony.Patch(
+                target,
+                postfix:
+                    new HarmonyMethod(postfixMethod));
+
+            Plugin.Log.Info(
+                "FriendlyGridAccess patched " +
+                "MyTerminalBlock.HasPlayerAccessWithNobodyCheck.");
         }
 
         /*
-         * Vanilla is always allowed to decide first.
+         * __0 means the first argument of the original method.
          *
-         * If vanilla already grants access:
-         *     do nothing.
-         *
-         * If vanilla denies access:
-         *     FriendlyGridAccess can upgrade the result to true
-         *     when the grid has granted the player's faction access
-         *     and the faction relationship still meets the configured
-         *     reputation threshold.
-         *
-         * We NEVER convert a vanilla allow into a denial.
+         * We deliberately use Harmony's positional argument
+         * syntax instead of the original argument name so
+         * future SE parameter-name changes don't break us.
          */
-            private static void HasPlayerAccessPostfix(
-                object __instance,
-                long identityId,
-                MyRelationsBetweenPlayerAndBlock defaultNoUser,
-                ref bool __result)
+        private static void HasPlayerAccessPostfix(
+            object __instance,
+            long __0,
+            ref bool __result)
         {
             if (__result)
                 return;
 
+            TryGrantFriendlyAccess(
+                __instance,
+                __0,
+                ref __result);
+        }
+
+        private static void HasPlayerAccessWithNobodyCheckPostfix(
+            object __instance,
+            long __0,
+            ref bool __result)
+        {
+            if (__result)
+                return;
+
+            /*
+             * Identity ID 0 represents Nobody.
+             * FGA only grants actual players access.
+             */
+            if (__0 == 0)
+                return;
+
+            TryGrantFriendlyAccess(
+                __instance,
+                __0,
+                ref __result);
+        }
+
+        private static void TryGrantFriendlyAccess(
+            object instance,
+            long identityId,
+            ref bool result)
+        {
             try
             {
-                var block = __instance as MyCubeBlock;
+                var block =
+                    instance as MyCubeBlock;
 
                 if (block == null ||
                     block.CubeGrid == null)
@@ -114,7 +177,8 @@ namespace FriendlyGridAccess
                     return;
                 }
 
-                var plugin = Plugin.Instance;
+                var plugin =
+                    Plugin.Instance;
 
                 if (plugin == null ||
                     plugin.Store == null ||
@@ -123,10 +187,10 @@ namespace FriendlyGridAccess
                     return;
                 }
 
-             var playerFaction =
-                FactionHelper.GetFactionForIdentity(
-                identityId);
-                
+                var playerFaction =
+                    FactionHelper.GetFactionForIdentity(
+                        identityId);
+
                 if (playerFaction == null)
                     return;
 
@@ -138,8 +202,7 @@ namespace FriendlyGridAccess
                     return;
 
                 /*
-                 * Same faction is already handled by vanilla.
-                 * Do not interfere.
+                 * Vanilla already handles same-faction access.
                  */
                 if (ownerFaction.FactionId ==
                     playerFaction.FactionId)
@@ -151,8 +214,8 @@ namespace FriendlyGridAccess
                     block.CubeGrid.EntityId;
 
                 /*
-                 * This faction must have explicitly been
-                 * granted access to this grid.
+                 * Target faction must have been explicitly
+                 * granted permission for this grid.
                  */
                 if (!plugin.Store.IsGranted(
                         gridId,
@@ -162,12 +225,8 @@ namespace FriendlyGridAccess
                 }
 
                 /*
-                 * Re-check current reputation on every
-                 * access decision.
-                 *
-                 * A grant therefore stops working immediately
-                 * if the factions are no longer sufficiently
-                 * friendly.
+                 * The factions must still meet the configured
+                 * reputation threshold right now.
                  */
                 if (!FactionHelper.MeetsThreshold(
                         ownerFaction.FactionId,
@@ -177,22 +236,16 @@ namespace FriendlyGridAccess
                 }
 
                 /*
-                 * Vanilla denied access, but FriendlyGridAccess
-                 * approves this player's faction.
+                 * FriendlyGridAccess only upgrades a vanilla
+                 * denial. It never removes vanilla access.
                  */
-                __result = true;
+                result = true;
             }
             catch (Exception e)
             {
-                /*
-                 * Fail closed.
-                 *
-                 * If FriendlyGridAccess itself errors, preserve
-                 * the original vanilla denial.
-                 */
                 Plugin.Log.Error(
                     e,
-                    "FriendlyGridAccess access check failed; " +
+                    "Friendly access check failed; " +
                     "preserving vanilla denial.");
             }
         }
