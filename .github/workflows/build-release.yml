@@ -36,7 +36,12 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Building FriendlyGridAccess $version"
-
+          
+      - name: Install .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+          
       - name: Download DepotDownloader
         shell: pwsh
         run: |
@@ -75,20 +80,20 @@ jobs:
           Get-ChildItem $ddRoot -Recurse |
             ForEach-Object { Write-Host $_.FullName }
 
-          $exe = Get-ChildItem $ddRoot `
-            -Filter 'DepotDownloader.exe' `
+          $dll = Get-ChildItem $ddRoot `
+            -Filter 'DepotDownloader.dll' `
             -File `
             -Recurse |
             Select-Object -First 1
 
-          if (-not $exe) {
-            throw 'DepotDownloader.exe was not found in the Windows x64 archive.'
+          if (-not $dll) {
+            throw 'DepotDownloader.dll was not found in the downloaded archive.'
           }
 
-          "DEPOT_DOWNLOADER=$($exe.FullName)" >> $env:GITHUB_ENV
+          "DEPOT_DOWNLOADER_DLL=$($dll.FullName)" >> $env:GITHUB_ENV
 
-          Write-Host "DepotDownloader executable:"
-          Write-Host $exe.FullName
+          Write-Host "DepotDownloader DLL:"
+          Write-Host $dll.FullName
           
       - name: Download only Space Engineers build references
         shell: pwsh
@@ -116,7 +121,7 @@ jobs:
           )
 
           if ($env:DEPOT_DOWNLOADER_KIND -eq 'exe') {
-            & $env:DEPOT_DOWNLOADER @args
+            dotnet $env:DEPOT_DOWNLOADER_DLL @args
           } else {
             dotnet $env:DEPOT_DOWNLOADER @args
           }
