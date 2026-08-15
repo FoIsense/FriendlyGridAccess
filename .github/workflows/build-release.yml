@@ -37,10 +37,10 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Building FriendlyGridAccess $version"
           
-      - name: Install .NET 8
+      - name: Install .NET 9 Desktop Runtime
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '9.0.x'
           
       - name: Download DepotDownloader
         shell: pwsh
@@ -48,6 +48,7 @@ jobs:
           $ddRoot = Join-Path $env:RUNNER_TEMP 'DepotDownloader'
           $ddZip = Join-Path $env:RUNNER_TEMP 'DepotDownloader-windows-x64.zip'
 
+          Remove-Item $ddRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force -Path $ddRoot | Out-Null
 
           $release = Invoke-RestMethod `
@@ -55,52 +56,48 @@ jobs:
             -Headers @{ 'User-Agent' = 'FriendlyGridAccess-GitHub-Actions' }
 
           $asset = $release.assets |
-            Where-Object {
-              $_.name -match 'windows-x64\.zip$'
-            } |
+            Where-Object { $_.name -eq 'DepotDownloader-windows-x64.zip' } |
             Select-Object -First 1
 
           if (-not $asset) {
-            Write-Host "Available DepotDownloader assets:"
+            Write-Host 'Available assets:'
             $release.assets | ForEach-Object {
               Write-Host " - $($_.name)"
             }
 
-            throw 'Could not find the Windows x64 DepotDownloader release asset.'
+            throw 'Windows x64 DepotDownloader asset was not found.'
           }
 
           Write-Host "Downloading: $($asset.name)"
+
           Invoke-WebRequest `
             -Uri $asset.browser_download_url `
             -OutFile $ddZip
 
           Expand-Archive $ddZip $ddRoot -Force
 
-          Write-Host "Extracted DepotDownloader files:"
-          Get-ChildItem $ddRoot -Recurse |
-            ForEach-Object { Write-Host $_.FullName }
+          $exe = Join-Path $ddRoot 'DepotDownloader.exe'
 
-          $dll = Get-ChildItem $ddRoot `
-            -Filter 'DepotDownloader.dll' `
-            -File `
-            -Recurse |
-            Select-Object -First 1
-
-          if (-not $dll) {
-            throw 'DepotDownloader.dll was not found in the downloaded archive.'
+          if (-not (Test-Path $exe)) {
+            throw 'DepotDownloader.exe was not found.'
           }
 
-          "DEPOT_DOWNLOADER_DLL=$($dll.FullName)" >> $env:GITHUB_ENV
+          "DEPOT_DOWNLOADER=$exe" >> $env:GITHUB_ENV
 
-          Write-Host "DepotDownloader DLL:"
-          Write-Host $dll.FullName
+          Write-Host 'Testing DepotDownloader...'
+          & $exe -V
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "DepotDownloader test failed with exit code $LASTEXITCODE"
+          }
           
       - name: Download only Space Engineers build references
         shell: pwsh
         run: |
           $seRoot = Join-Path $env:RUNNER_TEMP 'se-refs'
-          $fileList = Join-Path $env:RUNNER_TEMP 'se-reference-files.txt'
           New-Item -ItemType Directory -Force -Path $seRoot | Out-Null
+
+          $fileList = Join-Path $env:RUNNER_TEMP 'se-files.txt'
 
           @'
           DedicatedServer64/Sandbox.Common.dll
@@ -110,53 +107,34 @@ jobs:
           DedicatedServer64/VRage.Game.dll
           DedicatedServer64/VRage.Library.dll
           DedicatedServer64/VRage.Math.dll
-          '@ | Set-Content $fileList -Encoding ASCII
+          '@ | Set-Content $fileList
 
-          $args = @(
-            '-app', $env:SE_APP_ID,
-            '-depot', $env:SE_DEPOT_ID,
-            '-filelist', $fileList,
-            '-dir', $seRoot,
-            '-validate'
-          )
-
-          if ($env:DEPOT_DOWNLOADER_KIND -eq 'exe') {
-            dotnet $env:DEPOT_DOWNLOADER_DLL @args
-          } else {
-            dotnet $env:DEPOT_DOWNLOADER @args
-          }
+          & $env:DEPOT_DOWNLOADER `
+            -app 298740 `
+            -depot 298741 `
+            -dir $seRoot `
+            -filelist $fileList
 
           if ($LASTEXITCODE -ne 0) {
             throw "DepotDownloader failed with exit code $LASTEXITCODE"
           }
 
-          $sandbox = Get-ChildItem $seRoot -Filter 'Sandbox.Game.dll' -File -Recurse | Select-Object -First 1
+          $sandbox = Get-ChildItem $seRoot `
+            -Filter 'Sandbox.Game.dll' `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
           if (-not $sandbox) {
             Write-Host 'Downloaded files:'
-            Get-ChildItem $seRoot -File -Recurse -ErrorAction SilentlyContinue |
+            Get-ChildItem $seRoot -Recurse |
               ForEach-Object { Write-Host $_.FullName }
+
             throw 'Sandbox.Game.dll was not downloaded.'
           }
 
-          $seDir = $sandbox.DirectoryName
-          $required = @(
-            'Sandbox.Common.dll',
-            'Sandbox.Game.dll',
-            'SpaceEngineers.Game.dll',
-            'VRage.dll',
-            'VRage.Game.dll',
-            'VRage.Library.dll',
-            'VRage.Math.dll'
-          )
-
-          foreach ($name in $required) {
-            if (-not (Test-Path (Join-Path $seDir $name))) {
-              throw "Required Space Engineers reference missing: $name"
-            }
-          }
-
-          "SE_DIR=$seDir" >> $env:GITHUB_ENV
-          Write-Host "Space Engineers references: $seDir"
+          "SE_DIR=$($sandbox.DirectoryName)" >> $env:GITHUB_ENV
+          Write-Host "SE references: $($sandbox.DirectoryName)"
 
       - name: Download current Torch assemblies
         shell: pwsh
