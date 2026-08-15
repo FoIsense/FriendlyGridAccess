@@ -50,17 +50,41 @@ jobs:
         run: |
           $steamCmd = Join-Path $env:RUNNER_TEMP 'steamcmd\steamcmd.exe'
           $seRoot = Join-Path $env:RUNNER_TEMP 'se-ds'
-          & $steamCmd +force_install_dir $seRoot +login anonymous +app_update $env:SE_APP_ID validate +quit
-          if ($LASTEXITCODE -ne 0) { throw "SteamCMD failed with exit code $LASTEXITCODE" }
+
+          Write-Host "Bootstrapping SteamCMD..."
+          & $steamCmd +quit
+
+          # SteamCMD may exit non-zero while performing its first self-update.
+          # Run it again after the bootstrap/update has completed.
+          Write-Host "Installing Space Engineers Dedicated Server..."
+          & $steamCmd `
+            +force_install_dir $seRoot `
+            +login anonymous `
+            +app_update $env:SE_APP_ID validate `
+            +quit
+
+          $steamExit = $LASTEXITCODE
+
+          if ($steamExit -ne 0) {
+            Write-Warning "SteamCMD returned exit code $steamExit. Checking whether the server files were installed anyway."
+          }
 
           $sandbox = Get-ChildItem $seRoot -Filter 'Sandbox.Game.dll' -File -Recurse |
             Where-Object { $_.FullName -match 'DedicatedServer64' } |
             Select-Object -First 1
-          if (-not $sandbox) { throw 'Sandbox.Game.dll not found after SteamCMD install.' }
+
+          if (-not $sandbox) {
+            Write-Host "Contents of Space Engineers install directory:"
+            Get-ChildItem $seRoot -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -First 100 |
+              ForEach-Object { Write-Host $_.FullName }
+
+            throw 'Sandbox.Game.dll not found after SteamCMD install.'
+          }
 
           "SE_DIR=$($sandbox.DirectoryName)" >> $env:GITHUB_ENV
           Write-Host "SE assemblies: $($sandbox.DirectoryName)"
-
+          
       - name: Download current Torch assemblies
         shell: pwsh
         run: |
