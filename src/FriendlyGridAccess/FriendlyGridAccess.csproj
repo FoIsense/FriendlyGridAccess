@@ -1,0 +1,67 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net481</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AssemblyName>FriendlyGridAccess</AssemblyName>
+    <RootNamespace>FriendlyGridAccess</RootNamespace>
+    <Version>0.4.0</Version>
+    <AssemblyVersion>0.4.0.0</AssemblyVersion>
+    <FileVersion>0.4.0.0</FileVersion>
+    <Authors>Friendly Grid Access contributors</Authors>
+    <Description>Torch plugin for Space Engineers dedicated servers that grants explicitly approved friendly factions access to grids without transferring ownership.</Description>
+    <RepositoryUrl>https://github.com/FoIsense/FriendlyGridAccess</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <TorchDir Condition="'$(TorchDir)'==''">C:\Torch</TorchDir>
+    <SEDir Condition="'$(SEDir)'==''">$(TorchDir)\DedicatedServer64</SEDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.3.3" />
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net481" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="NLog">
+      <HintPath>$(TorchDir)\NLog.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Torch.API">
+      <HintPath>$(TorchDir)\Torch.API.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Torch">
+      <HintPath>$(TorchDir)\Torch.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Sandbox.Common">
+      <HintPath>$(SEDir)\Sandbox.Common.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Sandbox.Game">
+      <HintPath>$(SEDir)\Sandbox.Game.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SpaceEngineers.Game">
+      <HintPath>$(SEDir)\SpaceEngineers.Game.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VRage">
+      <HintPath>$(SEDir)\VRage.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VRage.Game">
+      <HintPath>$(SEDir)\VRage.Game.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VRage.Library">
+      <HintPath>$(SEDir)\VRage.Library.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="VRage.Math">
+      <HintPath>$(SEDir)\VRage.Math.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
