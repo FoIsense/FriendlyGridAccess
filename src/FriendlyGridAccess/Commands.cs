@@ -123,14 +123,43 @@ namespace FriendlyGridAccess
             Context.Respond("FGA usage: !fga grant TAG | !fga revoke TAG | !fga list");
         }
 
-        private MyCubeGrid FindNearestGrid(Vector3D position)
+private MyCubeGrid FindNearestGrid(Vector3D position)
+{
+    var radius = Plugin.Instance.Config.CommandGridSearchRadiusMeters;
+    var radiusSquared = radius * radius;
+
+    MyCubeGrid nearestGrid = null;
+    double nearestDistanceSquared = double.MaxValue;
+
+    foreach (var grid in MyEntities.GetEntities().OfType<MyCubeGrid>())
+    {
+        if (grid == null || grid.Closed)
+            continue;
+
+        var box = grid.PositionComp.WorldAABB;
+
+        // Find the closest point on the grid's world bounding box
+        // to the player's current position.
+        var closestPoint = new Vector3D(
+            Math.Max(box.Min.X, Math.Min(position.X, box.Max.X)),
+            Math.Max(box.Min.Y, Math.Min(position.Y, box.Max.Y)),
+            Math.Max(box.Min.Z, Math.Min(position.Z, box.Max.Z))
+        );
+
+        var distanceSquared =
+            Vector3D.DistanceSquared(position, closestPoint);
+
+        if (distanceSquared > radiusSquared)
+            continue;
+
+        if (distanceSquared < nearestDistanceSquared)
         {
-            var radius = Plugin.Instance.Config.CommandGridSearchRadiusMeters;
-            return MyEntities.GetEntities()
-                .OfType<MyCubeGrid>()
-                .Where(g => !g.Closed && Vector3D.DistanceSquared(position, g.PositionComp.GetPosition()) <= radius * radius)
-                .OrderBy(g => Vector3D.DistanceSquared(position, g.PositionComp.GetPosition()))
-                .FirstOrDefault();
+            nearestDistanceSquared = distanceSquared;
+            nearestGrid = grid;
         }
+    }
+
+    return nearestGrid;
+}
     }
 }
