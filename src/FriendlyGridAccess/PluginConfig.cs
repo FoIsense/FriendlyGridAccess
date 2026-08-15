@@ -5,7 +5,7 @@ namespace FriendlyGridAccess
 {
     public sealed class PluginConfig
     {
-        public int MinimumReputation { get; set; } = 1500;
+        public int MinimumReputation { get; set; } = 501;
         public double CommandGridSearchRadiusMeters { get; set; } = 25.0;
         public bool RequireFactionLeaderOrFounder { get; set; } = true;
 
