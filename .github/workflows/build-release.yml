@@ -40,41 +40,56 @@ jobs:
       - name: Download DepotDownloader
         shell: pwsh
         run: |
-          $headers = @{ 'User-Agent' = 'FriendlyGridAccess-CI' }
-          $release = Invoke-RestMethod `
-            -Headers $headers `
-            -Uri 'https://api.github.com/repos/SteamRE/DepotDownloader/releases/latest'
+          $ddRoot = Join-Path $env:RUNNER_TEMP 'DepotDownloader'
+          $ddZip = Join-Path $env:RUNNER_TEMP 'DepotDownloader-windows-x64.zip'
 
-          $asset = $release.assets | Where-Object {
-            $_.name -match '(?i)(windows|win).*(x64|64).*\.zip$'
-          } | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path $ddRoot | Out-Null
+
+          $release = Invoke-RestMethod `
+            -Uri 'https://api.github.com/repos/SteamRE/DepotDownloader/releases/latest' `
+            -Headers @{ 'User-Agent' = 'FriendlyGridAccess-GitHub-Actions' }
+
+          $asset = $release.assets |
+            Where-Object {
+              $_.name -match 'windows-x64\.zip$'
+            } |
+            Select-Object -First 1
 
           if (-not $asset) {
-            Write-Host 'Available DepotDownloader assets:'
-            $release.assets | ForEach-Object { Write-Host " - $($_.name)" }
-            throw 'Could not locate a Windows x64 DepotDownloader release asset.'
+            Write-Host "Available DepotDownloader assets:"
+            $release.assets | ForEach-Object {
+              Write-Host " - $($_.name)"
+            }
+
+            throw 'Could not find the Windows x64 DepotDownloader release asset.'
           }
 
-          $zip = Join-Path $env:RUNNER_TEMP 'DepotDownloader.zip'
-          $root = Join-Path $env:RUNNER_TEMP 'DepotDownloader'
-          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
-          Expand-Archive $zip $root -Force
+          Write-Host "Downloading: $($asset.name)"
+          Invoke-WebRequest `
+            -Uri $asset.browser_download_url `
+            -OutFile $ddZip
 
-          $exe = Get-ChildItem $root -Filter 'DepotDownloader.exe' -File -Recurse | Select-Object -First 1
-          $dll = Get-ChildItem $root -Filter 'DepotDownloader.dll' -File -Recurse | Select-Object -First 1
+          Expand-Archive $ddZip $ddRoot -Force
 
-          if ($exe) {
-            "DEPOT_DOWNLOADER=$($exe.FullName)" >> $env:GITHUB_ENV
-            "DEPOT_DOWNLOADER_KIND=exe" >> $env:GITHUB_ENV
-            Write-Host "DepotDownloader: $($exe.FullName)"
-          } elseif ($dll) {
-            "DEPOT_DOWNLOADER=$($dll.FullName)" >> $env:GITHUB_ENV
-            "DEPOT_DOWNLOADER_KIND=dll" >> $env:GITHUB_ENV
-            Write-Host "DepotDownloader: dotnet $($dll.FullName)"
-          } else {
-            throw 'DepotDownloader executable was not found in the downloaded release.'
+          Write-Host "Extracted DepotDownloader files:"
+          Get-ChildItem $ddRoot -Recurse |
+            ForEach-Object { Write-Host $_.FullName }
+
+          $exe = Get-ChildItem $ddRoot `
+            -Filter 'DepotDownloader.exe' `
+            -File `
+            -Recurse |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw 'DepotDownloader.exe was not found in the Windows x64 archive.'
           }
 
+          "DEPOT_DOWNLOADER=$($exe.FullName)" >> $env:GITHUB_ENV
+
+          Write-Host "DepotDownloader executable:"
+          Write-Host $exe.FullName
+          
       - name: Download only Space Engineers build references
         shell: pwsh
         run: |
