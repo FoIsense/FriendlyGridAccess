@@ -1,0 +1,238 @@
+name: Build FriendlyGridAccess
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    env:
+      PLUGIN_NAME: FriendlyGridAccess
+      PLUGIN_GUID: 26f55d62-7b65-4e78-a347-dabf640d66d1
+      SE_APP_ID: '298740'
+      SE_DEPOT_ID: '298741'
+      TORCH_ZIP_URL: https://build.torchapi.com/job/Torch/job/master/lastSuccessfulBuild/artifact/bin/torch-server.zip
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        shell: pwsh
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}".TrimStart('v')
+          } else {
+            $version = "0.4.1-ci.${{ github.run_number }}"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Building FriendlyGridAccess $version"
+
+      - name: Download DepotDownloader
+        shell: pwsh
+        run: |
+          $headers = @{ 'User-Agent' = 'FriendlyGridAccess-CI' }
+          $release = Invoke-RestMethod `
+            -Headers $headers `
+            -Uri 'https://api.github.com/repos/SteamRE/DepotDownloader/releases/latest'
+
+          $asset = $release.assets | Where-Object {
+            $_.name -match '(?i)(windows|win).*(x64|64).*\.zip$'
+          } | Select-Object -First 1
+
+          if (-not $asset) {
+            Write-Host 'Available DepotDownloader assets:'
+            $release.assets | ForEach-Object { Write-Host " - $($_.name)" }
+            throw 'Could not locate a Windows x64 DepotDownloader release asset.'
+          }
+
+          $zip = Join-Path $env:RUNNER_TEMP 'DepotDownloader.zip'
+          $root = Join-Path $env:RUNNER_TEMP 'DepotDownloader'
+          Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
+          Expand-Archive $zip $root -Force
+
+          $exe = Get-ChildItem $root -Filter 'DepotDownloader.exe' -File -Recurse | Select-Object -First 1
+          $dll = Get-ChildItem $root -Filter 'DepotDownloader.dll' -File -Recurse | Select-Object -First 1
+
+          if ($exe) {
+            "DEPOT_DOWNLOADER=$($exe.FullName)" >> $env:GITHUB_ENV
+            "DEPOT_DOWNLOADER_KIND=exe" >> $env:GITHUB_ENV
+            Write-Host "DepotDownloader: $($exe.FullName)"
+          } elseif ($dll) {
+            "DEPOT_DOWNLOADER=$($dll.FullName)" >> $env:GITHUB_ENV
+            "DEPOT_DOWNLOADER_KIND=dll" >> $env:GITHUB_ENV
+            Write-Host "DepotDownloader: dotnet $($dll.FullName)"
+          } else {
+            throw 'DepotDownloader executable was not found in the downloaded release.'
+          }
+
+      - name: Download only Space Engineers build references
+        shell: pwsh
+        run: |
+          $seRoot = Join-Path $env:RUNNER_TEMP 'se-refs'
+          $fileList = Join-Path $env:RUNNER_TEMP 'se-reference-files.txt'
+          New-Item -ItemType Directory -Force -Path $seRoot | Out-Null
+
+          @'
+          DedicatedServer64/Sandbox.Common.dll
+          DedicatedServer64/Sandbox.Game.dll
+          DedicatedServer64/SpaceEngineers.Game.dll
+          DedicatedServer64/VRage.dll
+          DedicatedServer64/VRage.Game.dll
+          DedicatedServer64/VRage.Library.dll
+          DedicatedServer64/VRage.Math.dll
+          '@ | Set-Content $fileList -Encoding ASCII
+
+          $args = @(
+            '-app', $env:SE_APP_ID,
+            '-depot', $env:SE_DEPOT_ID,
+            '-filelist', $fileList,
+            '-dir', $seRoot,
+            '-validate'
+          )
+
+          if ($env:DEPOT_DOWNLOADER_KIND -eq 'exe') {
+            & $env:DEPOT_DOWNLOADER @args
+          } else {
+            dotnet $env:DEPOT_DOWNLOADER @args
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "DepotDownloader failed with exit code $LASTEXITCODE"
+          }
+
+          $sandbox = Get-ChildItem $seRoot -Filter 'Sandbox.Game.dll' -File -Recurse | Select-Object -First 1
+          if (-not $sandbox) {
+            Write-Host 'Downloaded files:'
+            Get-ChildItem $seRoot -File -Recurse -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host $_.FullName }
+            throw 'Sandbox.Game.dll was not downloaded.'
+          }
+
+          $seDir = $sandbox.DirectoryName
+          $required = @(
+            'Sandbox.Common.dll',
+            'Sandbox.Game.dll',
+            'SpaceEngineers.Game.dll',
+            'VRage.dll',
+            'VRage.Game.dll',
+            'VRage.Library.dll',
+            'VRage.Math.dll'
+          )
+
+          foreach ($name in $required) {
+            if (-not (Test-Path (Join-Path $seDir $name))) {
+              throw "Required Space Engineers reference missing: $name"
+            }
+          }
+
+          "SE_DIR=$seDir" >> $env:GITHUB_ENV
+          Write-Host "Space Engineers references: $seDir"
+
+      - name: Download current Torch assemblies
+        shell: pwsh
+        run: |
+          $torchZip = Join-Path $env:RUNNER_TEMP 'torch-server.zip'
+          $torchRoot = Join-Path $env:RUNNER_TEMP 'torch'
+          $torchRefs = Join-Path $env:RUNNER_TEMP 'torch-refs'
+
+          Invoke-WebRequest -Uri $env:TORCH_ZIP_URL -OutFile $torchZip
+          Expand-Archive $torchZip $torchRoot -Force
+          New-Item -ItemType Directory -Force -Path $torchRefs | Out-Null
+
+          $required = @('Torch.API.dll', 'Torch.dll', 'NLog.dll')
+          foreach ($name in $required) {
+            $found = Get-ChildItem $torchRoot -Filter $name -File -Recurse | Select-Object -First 1
+            if (-not $found) { throw "$name not found in downloaded Torch package." }
+            Copy-Item $found.FullName (Join-Path $torchRefs $name) -Force
+          }
+
+          "TORCH_DIR=$torchRefs" >> $env:GITHUB_ENV
+          Write-Host "Torch references staged at: $torchRefs"
+
+      - name: Restore NuGet packages
+        shell: pwsh
+        run: |
+          dotnet restore .\src\FriendlyGridAccess\FriendlyGridAccess.csproj
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet restore failed.' }
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          $args = @(
+            'build',
+            '.\src\FriendlyGridAccess\FriendlyGridAccess.csproj',
+            '-c', 'Release',
+            '--no-restore',
+            "-p:TorchDir=$env:TORCH_DIR",
+            "-p:SEDir=$env:SE_DIR",
+            "-p:Version=${{ steps.version.outputs.version }}"
+          )
+          & dotnet @args
+          if ($LASTEXITCODE -ne 0) { throw 'dotnet build failed.' }
+
+      - name: Package Torch plugin
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $out = '.\src\FriendlyGridAccess\bin\Release\net481'
+          $stage = '.\dist\package'
+          $zip = ".\dist\FriendlyGridAccess-$version.zip"
+
+          Remove-Item .\dist -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+
+          $pluginDll = Join-Path $out 'FriendlyGridAccess.dll'
+          if (-not (Test-Path $pluginDll)) { throw "Plugin DLL missing: $pluginDll" }
+          Copy-Item $pluginDll $stage -Force
+
+          $pdb = Join-Path $out 'FriendlyGridAccess.pdb'
+          if (Test-Path $pdb) { Copy-Item $pdb $stage -Force }
+
+          foreach ($dep in @('0Harmony.dll', 'Lib.Harmony.dll', 'Newtonsoft.Json.dll')) {
+            $candidate = Join-Path $out $dep
+            if (Test-Path $candidate) { Copy-Item $candidate $stage -Force }
+          }
+
+          $manifest = Get-Content .\manifest.xml -Raw
+          $manifest = $manifest.Replace('${VERSION}', $version)
+          $manifestPath = Join-Path $stage 'manifest.xml'
+          Set-Content $manifestPath $manifest -Encoding UTF8
+
+          [xml]$xml = Get-Content $manifestPath
+          if ($xml.PluginManifest.Name -ne $env:PLUGIN_NAME) { throw 'Manifest name mismatch.' }
+          if ($xml.PluginManifest.Guid -ne $env:PLUGIN_GUID) { throw 'Manifest GUID mismatch.' }
+
+          Compress-Archive -Path "$stage\*" -DestinationPath $zip -Force
+          Copy-Item $pluginDll .\dist\FriendlyGridAccess.dll -Force
+          Copy-Item $manifestPath .\dist\manifest.xml -Force
+          Write-Host "Created $zip"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FriendlyGridAccess-${{ steps.version.outputs.version }}
+          path: |
+            dist/FriendlyGridAccess-*.zip
+            dist/FriendlyGridAccess.dll
+            dist/manifest.xml
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/FriendlyGridAccess-*.zip
+            dist/FriendlyGridAccess.dll
+            dist/manifest.xml
