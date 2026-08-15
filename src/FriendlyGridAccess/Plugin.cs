@@ -9,6 +9,7 @@ using Torch.API;
 using Torch.API.Plugins;
 using Torch.API.Session;
 using Torch.Managers;
+using Torch.Session;
 
 namespace FriendlyGridAccess
 {
