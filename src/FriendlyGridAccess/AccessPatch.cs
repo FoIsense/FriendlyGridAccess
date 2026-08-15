@@ -1,6 +1,5 @@
 using HarmonyLib;
 using Sandbox.Game.Entities;
-using Sandbox.Game.Entities.Cube;
 using System;
 using System.Reflection;
 using VRage.Game;
@@ -31,6 +30,9 @@ namespace FriendlyGridAccess
             PatchHasPlayerAccessWithNobodyCheck(
                 harmony,
                 terminalBlockType);
+
+            PatchGetUserRelationToOwner(
+                harmony);
         }
 
         private static void PatchHasPlayerAccess(
@@ -53,13 +55,13 @@ namespace FriendlyGridAccess
                     "HasPlayerAccess(long, MyRelationsBetweenPlayerAndBlock)");
             }
 
-            var postfixMethod =
+            var postfix =
                 typeof(AccessPatch).GetMethod(
                     nameof(HasPlayerAccessPostfix),
                     BindingFlags.Static |
                     BindingFlags.NonPublic);
 
-            if (postfixMethod == null)
+            if (postfix == null)
             {
                 throw new MissingMethodException(
                     typeof(AccessPatch).FullName,
@@ -68,8 +70,7 @@ namespace FriendlyGridAccess
 
             harmony.Patch(
                 target,
-                postfix:
-                    new HarmonyMethod(postfixMethod));
+                postfix: new HarmonyMethod(postfix));
 
             Plugin.Log.Info(
                 "FriendlyGridAccess patched " +
@@ -96,13 +97,13 @@ namespace FriendlyGridAccess
                     "HasPlayerAccessWithNobodyCheck(long, bool)");
             }
 
-            var postfixMethod =
+            var postfix =
                 typeof(AccessPatch).GetMethod(
                     nameof(HasPlayerAccessWithNobodyCheckPostfix),
                     BindingFlags.Static |
                     BindingFlags.NonPublic);
 
-            if (postfixMethod == null)
+            if (postfix == null)
             {
                 throw new MissingMethodException(
                     typeof(AccessPatch).FullName,
@@ -111,21 +112,54 @@ namespace FriendlyGridAccess
 
             harmony.Patch(
                 target,
-                postfix:
-                    new HarmonyMethod(postfixMethod));
+                postfix: new HarmonyMethod(postfix));
 
             Plugin.Log.Info(
                 "FriendlyGridAccess patched " +
                 "MyTerminalBlock.HasPlayerAccessWithNobodyCheck.");
         }
 
-        /*
-         * __0 means the first argument of the original method.
-         *
-         * We deliberately use Harmony's positional argument
-         * syntax instead of the original argument name so
-         * future SE parameter-name changes don't break us.
-         */
+        private static void PatchGetUserRelationToOwner(
+            Harmony harmony)
+        {
+            var target = AccessTools.Method(
+                typeof(MyCubeBlock),
+                "GetUserRelationToOwner",
+                new[]
+                {
+                    typeof(long),
+                    typeof(MyRelationsBetweenPlayerAndBlock)
+                });
+
+            if (target == null)
+            {
+                throw new MissingMethodException(
+                    typeof(MyCubeBlock).FullName,
+                    "GetUserRelationToOwner(long, MyRelationsBetweenPlayerAndBlock)");
+            }
+
+            var postfix =
+                typeof(AccessPatch).GetMethod(
+                    nameof(GetUserRelationToOwnerPostfix),
+                    BindingFlags.Static |
+                    BindingFlags.NonPublic);
+
+            if (postfix == null)
+            {
+                throw new MissingMethodException(
+                    typeof(AccessPatch).FullName,
+                    nameof(GetUserRelationToOwnerPostfix));
+            }
+
+            harmony.Patch(
+                target,
+                postfix: new HarmonyMethod(postfix));
+
+            Plugin.Log.Info(
+                "FriendlyGridAccess patched " +
+                "MyCubeBlock.GetUserRelationToOwner.");
+        }
+
         private static void HasPlayerAccessPostfix(
             object __instance,
             long __0,
@@ -148,10 +182,6 @@ namespace FriendlyGridAccess
             if (__result)
                 return;
 
-            /*
-             * Identity ID 0 represents Nobody.
-             * FGA only grants actual players access.
-             */
             if (__0 == 0)
                 return;
 
@@ -159,6 +189,50 @@ namespace FriendlyGridAccess
                 __instance,
                 __0,
                 ref __result);
+        }
+
+        private static void GetUserRelationToOwnerPostfix(
+            MyCubeBlock __instance,
+            long __0,
+            ref MyRelationsBetweenPlayerAndBlock __result)
+        {
+            /*
+             * Never weaken an existing Owner/FactionShare result.
+             */
+            if (__result ==
+                    MyRelationsBetweenPlayerAndBlock.Owner ||
+                __result ==
+                    MyRelationsBetweenPlayerAndBlock.FactionShare)
+            {
+                return;
+            }
+
+            if (__0 == 0)
+                return;
+
+            try
+            {
+                if (HasFriendlyGridPermission(
+                        __instance,
+                        __0))
+                {
+                    /*
+                     * Make approved cross-faction players look
+                     * faction-shared to vanilla access logic.
+                     *
+                     * Ownership itself is NOT changed.
+                     */
+                    __result =
+                        MyRelationsBetweenPlayerAndBlock.FactionShare;
+                }
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.Error(
+                    e,
+                    "Friendly relation check failed; " +
+                    "preserving vanilla relation.");
+            }
         }
 
         private static void TryGrantFriendlyAccess(
@@ -171,75 +245,15 @@ namespace FriendlyGridAccess
                 var block =
                     instance as MyCubeBlock;
 
-                if (block == null ||
-                    block.CubeGrid == null)
+                if (block == null)
+                    return;
+
+                if (HasFriendlyGridPermission(
+                        block,
+                        identityId))
                 {
-                    return;
+                    result = true;
                 }
-
-                var plugin =
-                    Plugin.Instance;
-
-                if (plugin == null ||
-                    plugin.Store == null ||
-                    plugin.Config == null)
-                {
-                    return;
-                }
-
-                var playerFaction =
-                    FactionHelper.GetFactionForIdentity(
-                        identityId);
-
-                if (playerFaction == null)
-                    return;
-
-                var ownerFaction =
-                    FactionHelper.GetGridOwnerFaction(
-                        block.CubeGrid);
-
-                if (ownerFaction == null)
-                    return;
-
-                /*
-                 * Vanilla already handles same-faction access.
-                 */
-                if (ownerFaction.FactionId ==
-                    playerFaction.FactionId)
-                {
-                    return;
-                }
-
-                var gridId =
-                    block.CubeGrid.EntityId;
-
-                /*
-                 * Target faction must have been explicitly
-                 * granted permission for this grid.
-                 */
-                if (!plugin.Store.IsGranted(
-                        gridId,
-                        playerFaction.FactionId))
-                {
-                    return;
-                }
-
-                /*
-                 * The factions must still meet the configured
-                 * reputation threshold right now.
-                 */
-                if (!FactionHelper.MeetsThreshold(
-                        ownerFaction.FactionId,
-                        playerFaction.FactionId))
-                {
-                    return;
-                }
-
-                /*
-                 * FriendlyGridAccess only upgrades a vanilla
-                 * denial. It never removes vanilla access.
-                 */
-                result = true;
             }
             catch (Exception e)
             {
@@ -248,6 +262,80 @@ namespace FriendlyGridAccess
                     "Friendly access check failed; " +
                     "preserving vanilla denial.");
             }
+        }
+
+        private static bool HasFriendlyGridPermission(
+            MyCubeBlock block,
+            long identityId)
+        {
+            if (block == null ||
+                block.CubeGrid == null)
+            {
+                return false;
+            }
+
+            var plugin =
+                Plugin.Instance;
+
+            if (plugin == null ||
+                plugin.Store == null ||
+                plugin.Config == null)
+            {
+                return false;
+            }
+
+            var playerFaction =
+                FactionHelper.GetFactionForIdentity(
+                    identityId);
+
+            if (playerFaction == null)
+                return false;
+
+            var ownerFaction =
+                FactionHelper.GetGridOwnerFaction(
+                    block.CubeGrid);
+
+            if (ownerFaction == null)
+                return false;
+
+            /*
+             * Vanilla already handles members
+             * of the owning faction.
+             */
+            if (ownerFaction.FactionId ==
+                playerFaction.FactionId)
+            {
+                return false;
+            }
+
+            var gridId =
+                block.CubeGrid.EntityId;
+
+            /*
+             * Explicit FGA grant is required.
+             */
+            if (!plugin.Store.IsGranted(
+                    gridId,
+                    playerFaction.FactionId))
+            {
+                return false;
+            }
+
+            /*
+             * Current faction reputation must still
+             * meet the configured threshold.
+             *
+             * Set MinimumReputation to 500 in config
+             * for your new rule.
+             */
+            if (!FactionHelper.MeetsThreshold(
+                    ownerFaction.FactionId,
+                    playerFaction.FactionId))
+            {
+                return false;
+            }
+
+            return true;
         }
     }
 }
