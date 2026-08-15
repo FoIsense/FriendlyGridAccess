@@ -5,6 +5,7 @@ using System.Linq;
 using Torch.Commands;
 using Torch.Commands.Permissions;
 using VRage.Game;
+using VRage.Game.ModAPI;
 using VRageMath;
 
 namespace FriendlyGridAccess
