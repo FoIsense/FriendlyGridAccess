@@ -95,11 +95,11 @@ namespace FriendlyGridAccess
          *
          * We NEVER convert a vanilla allow into a denial.
          */
-private static void HasPlayerAccessPostfix(
-    object __instance,
-    long identityId,
-    MyRelationsBetweenPlayerAndBlock defaultNoUser,
-    ref bool __result)
+            private static void HasPlayerAccessPostfix(
+                object __instance,
+                long identityId,
+                MyRelationsBetweenPlayerAndBlock defaultNoUser,
+                ref bool __result)
         {
             if (__result)
                 return;
@@ -123,10 +123,10 @@ private static void HasPlayerAccessPostfix(
                     return;
                 }
 
-var playerFaction =
-    FactionHelper.GetFactionForIdentity(
-        identityId);
-
+             var playerFaction =
+                FactionHelper.GetFactionForIdentity(
+                identityId);
+                
                 if (playerFaction == null)
                     return;
 
