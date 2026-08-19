@@ -1,7 +1,7 @@
-<?xml version="1.0"?>
-<PluginManifest xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<?xml version="1.0" encoding="utf-8"?>
+<PluginManifest xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Name>FriendlyGridAccess</Name>
   <Guid>26f55d62-7b65-4e78-a347-dabf640d66d1</Guid>
-  <Repository>Folsense/FriendlyGridAccess</Repository>
   <Version>${VERSION}</Version>
+  <Description>Friendly faction grid access without ownership transfer.</Description>
 </PluginManifest>
